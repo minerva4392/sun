@@ -1,0 +1,9 @@
+{
+  "name": "countdown-club-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Three-player cooperative bomb defusal game",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "ws": "^8.22.2" }
+}
