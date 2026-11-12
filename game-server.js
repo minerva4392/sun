@@ -184,7 +184,9 @@ wss.on('connection', ws => {
       const player = room.players.find(p => p.id === ws.id);
       if (!player) return 'not-player';
       if (msg.type === 'start') {
-        if (room.host !== ws.id || room.players.length !== 3 || room.status === 'playing') return 'ignored';
+        if (room.host !== ws.id) return 'only-host';
+        if (room.players.length !== 3) return 'need-three';
+        if (room.status === 'playing') return 'already-playing';
         room.round = 0; room.timeLeft = 120; room.strikes = 0; room.status = 'playing'; room.startedAt = Date.now(); room.endsAt = room.startedAt + 120000; room.runId = randomUUID(); room.score = null; room.scoreSaved = true; return 'updated';
       }
       if (msg.type === 'message' && player.role === 'mute' && room.status === 'playing') {
@@ -208,6 +210,8 @@ wss.on('connection', ws => {
       }
       return 'ignored';
     });
+    if (result.result === 'only-host') { send(ws, 'error', { message: '방장만 게임을 시작할 수 있어요.' }); return; }
+    if (result.result === 'need-three') { send(ws, 'error', { message: '세 역할이 모두 참가해야 시작할 수 있어요.' }); return; }
     if (result.room) { if (result.room.status === 'won' && !result.room.scoreSaved) { try { await persistRoomScore(result.room); result.room = await getRoom(code); } catch (error) { console.error('Leaderboard save failed:', error.message); } } broadcast(result.room); }
   });
   ws.on('close', () => { remove(ws).catch(() => {}); });
