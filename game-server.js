@@ -10,12 +10,18 @@ const root = __dirname;
 const port = Number(process.env.PORT || 3000);
 const answers = [1, 2, 0];
 const localRooms = new Map();
+const localScores = [];
 const redis = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
   ? new Redis({ url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN })
   : null;
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8' };
 const server = http.createServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  if (pathname === '/api/leaderboard' && req.method === 'GET') {
+    readLeaderboard().then(records => res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }).end(JSON.stringify({ records })))
+      .catch(error => { console.error('Leaderboard read failed:', error.message); res.writeHead(503, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }).end(JSON.stringify({ error: '순위표를 불러오지 못했어요.' })); });
+    return;
+  }
   if (pathname === '/network-addresses') {
     const addresses = Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address);
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }).end(JSON.stringify({ addresses })); return;
@@ -32,6 +38,23 @@ const wss = new WebSocketServer({ server, path: '/api/ws', perMessageDeflate: fa
 function key(code) { return `bomb-room:${code}`; }
 function send(ws, type, data = {}) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, ...data })); }
 function decodeRoom(value) { return typeof value === 'string' ? JSON.parse(value) : value; }
+function cleanTeamName(value, fallback = '해오름제 팀') { return String(value || fallback).replace(/[<>\x00-\x1f\x7f]/g, '').trim().slice(0, 24) || fallback; }
+function sortScores(records) { return records.sort((a, b) => a.seconds - b.seconds || a.strikes - b.strikes || a.playedAt.localeCompare(b.playedAt)).slice(0, 10); }
+async function readLeaderboard() {
+  if (!redis) return sortScores([...localScores]);
+  const values = await redis.lrange('bomb-leaderboard', 0, 199);
+  return sortScores(values.map(value => { try { return typeof value === 'string' ? JSON.parse(value) : value; } catch { return null; } }).filter(x => x && typeof x.team === 'string' && Number.isFinite(x.seconds) && Number.isFinite(x.strikes)));
+}
+async function saveScore(record) {
+  if (!redis) { if (!localScores.some(item => item.runId === record.runId)) localScores.push(record); return; }
+  const script = "local saved=redis.call('SET',KEYS[1],'1','NX','EX',ARGV[2]); if not saved then return 0 end; redis.call('LPUSH',KEYS[2],ARGV[1]); redis.call('LTRIM',KEYS[2],0,199); return 1";
+  await redis.eval(script, [`bomb-score-once:${record.runId}`, 'bomb-leaderboard'], [JSON.stringify(record), '31536000']);
+}
+async function persistRoomScore(room) {
+  if (room.status !== 'won' || room.scoreSaved || !room.score) return;
+  await saveScore(room.score);
+  await updateRoom(room.code, current => { if (current.score?.runId === room.score.runId) current.scoreSaved = true; });
+}
 async function getRoom(code) {
   return redis ? decodeRoom(await redis.get(key(code))) : localRooms.get(code) || null;
 }
@@ -115,6 +138,7 @@ async function syncConnectedRooms() {
       await updateRoom(code, current => { if (current.status === 'playing' && current.endsAt <= Date.now()) { current.status = 'failed'; current.endsAt = null; } });
       room = await getRoom(code);
     }
+    if (room?.status === 'won' && !room.scoreSaved) { try { await persistRoomScore(room); room = await getRoom(code); } catch (error) { console.error('Leaderboard save failed:', error.message); } }
     if (room) broadcast(room);
   }
 }
@@ -130,7 +154,7 @@ wss.on('connection', ws => {
       let room, created = false;
       for (let attempt = 0; attempt < 5 && !created; attempt++) {
         const code = makeCode();
-        room = { code, players: [{ id: ws.id, name, role, connected: true }], host: ws.id, status: 'waiting', round: 0, timeLeft: 120, endsAt: null, strikes: 0, eventId: 0, events: [] };
+        room = { code, teamName: cleanTeamName(msg.teamName, `${name} 팀`), players: [{ id: ws.id, name, role, connected: true }], host: ws.id, status: 'waiting', round: 0, timeLeft: 120, endsAt: null, strikes: 0, eventId: 0, events: [] };
         created = await createRoom(room);
       }
       if (!created) { send(ws, 'error', { message: '방을 만들지 못했어요. 다시 시도해 주세요.' }); return; }
@@ -161,7 +185,7 @@ wss.on('connection', ws => {
       if (!player) return 'not-player';
       if (msg.type === 'start') {
         if (room.host !== ws.id || room.players.length !== 3 || room.status === 'playing') return 'ignored';
-        room.round = 0; room.timeLeft = 120; room.strikes = 0; room.status = 'playing'; room.endsAt = Date.now() + 120000; return 'updated';
+        room.round = 0; room.timeLeft = 120; room.strikes = 0; room.status = 'playing'; room.startedAt = Date.now(); room.endsAt = room.startedAt + 120000; room.runId = randomUUID(); room.score = null; room.scoreSaved = true; return 'updated';
       }
       if (msg.type === 'message' && player.role === 'mute' && room.status === 'playing') {
         addEvent(room, { type: 'team-message', target: 'deaf', text: String(msg.text || '').slice(0, 50), from: player.name }); return 'updated';
@@ -175,7 +199,7 @@ wss.on('connection', ws => {
         if (room.endsAt <= Date.now()) { room.status = 'failed'; room.endsAt = null; return 'updated'; }
         if (choice === answers[room.round]) {
           room.round++;
-          if (room.round >= answers.length) { room.status = 'won'; room.endsAt = null; }
+          if (room.round >= answers.length) { room.status = 'won'; room.endsAt = null; room.score = { runId: room.runId, team: room.teamName || '해오름제 팀', seconds: Math.floor((Date.now() - room.startedAt) / 1000), strikes: room.strikes, playedAt: new Date().toISOString() }; room.scoreSaved = false; }
         } else {
           room.strikes++;
           if (room.strikes >= 3) { room.status = 'failed'; room.endsAt = null; }
@@ -184,7 +208,7 @@ wss.on('connection', ws => {
       }
       return 'ignored';
     });
-    if (result.room) broadcast(result.room);
+    if (result.room) { if (result.room.status === 'won' && !result.room.scoreSaved) { try { await persistRoomScore(result.room); result.room = await getRoom(code); } catch (error) { console.error('Leaderboard save failed:', error.message); } } broadcast(result.room); }
   });
   ws.on('close', () => { remove(ws).catch(() => {}); });
   ws.on('error', () => { remove(ws).catch(() => {}); });

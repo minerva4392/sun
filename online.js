@@ -2,6 +2,24 @@
   const $ = id => document.getElementById(id);
   const roleNames = { blind: '색깔 제한 해제 담당', mute: '말 없는 매뉴얼 담당', deaf: '듣지 못하는 해결 담당' };
   let ws, role, host = false, connected = false, lastStatus = 'waiting';
+  async function loadLeaderboard() {
+    const list = $('leaderboardList'); if (!list) return;
+    try {
+      const response = await fetch('/api/leaderboard', { cache: 'no-store' });
+      if (!response.ok) throw new Error('unavailable');
+      const { records } = await response.json();
+      list.replaceChildren();
+      if (!records.length) { const li = document.createElement('li'); li.className = 'leaderboard-empty'; li.textContent = '아직 기록이 없어요. 첫 기록에 도전해 보세요!'; list.append(li); return; }
+      records.forEach((record, index) => {
+        const li = document.createElement('li'); li.className = 'leaderboard-row';
+        const rank = document.createElement('b'); rank.textContent = String(index + 1).padStart(2, '0');
+        const team = document.createElement('span'); team.className = 'leaderboard-team'; team.textContent = record.team;
+        const time = document.createElement('strong'); time.textContent = `${String(Math.floor(record.seconds / 60)).padStart(2, '0')}:${String(record.seconds % 60).padStart(2, '0')}`;
+        const strikes = document.createElement('small'); strikes.textContent = `실수 ${record.strikes}회`;
+        li.append(rank, team, time, strikes); list.append(li);
+      });
+    } catch { list.textContent = '순위표를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'; }
+  }
   const send = (type, data = {}) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, ...data })); };
   const status = text => { $('lobbyStatus').textContent = text; };
   function connect(kind) {
@@ -11,7 +29,7 @@
     const host = location.host || 'localhost:3000';
     ws = new WebSocket(`${protocol}//${host}/api/ws`);
     status('게임 서버에 연결하는 중…');
-    ws.onopen = () => send(kind, { code: $('roomCode').value.trim().toUpperCase(), name: $('playerName').value.trim(), role: $('playerRole').value });
+    ws.onopen = () => send(kind, { code: $('roomCode').value.trim().toUpperCase(), name: $('playerName').value.trim(), teamName: $('teamName').value.trim(), role: $('playerRole').value });
     ws.onmessage = event => {
       const msg = JSON.parse(event.data);
       if (msg.type === 'error') { status(msg.message); return; }
@@ -93,12 +111,14 @@
       $('deafHint').style.display = role === 'deaf' ? 'block' : 'none';
       $('message').textContent = s.status === 'won' ? 'MISSION COMPLETE · 함께 해냈어요!' : 'MISSION FAILED · 방장이 다시 시작할 수 있어요.';
       $('onlineStart').textContent = '방장이 새 게임을 시작할 수 있어요';
+      if (s.status === 'won' && lastStatus !== 'won') loadLeaderboard();
     }
     if (s.status === 'paused') { $('overlay').style.display = 'grid'; status('플레이어 연결이 끊겨 작전을 멈췄어요. 다시 참가하면 이어갈 수 있어요.'); }
     if (s.status === 'waiting') { $('overlay').style.display = 'grid'; status(`내 역할: ${roleNames[role]} · 방 코드 ${s.code} · ${count}/3명`); }
     lastStatus = s.status;
   }
   $('createRoom').onclick = () => connect('create');
+  $('refreshLeaderboard').onclick = loadLeaderboard;
   $('joinRoom').onclick = () => connect('join');
   $('onlineStart').onclick = () => send('start');
   $('readyBtn').onclick = () => { document.querySelector('.modal p').textContent = '색깔 제한 담당이 폭탄을 누릅니다. 말 없는 담당은 매뉴얼 규칙을 무음 전달하고, 듣지 못하는 담당은 폭탄 신호와 규칙을 풀어 번호를 시각적으로 알려줍니다.'; status('세 명 모두 다른 컴퓨터에서 같은 방 코드로 접속하면 됩니다.'); };
@@ -116,4 +136,6 @@
     catch { status(`초대 주소 ${url.toString()} · 코드 ${$('inviteCode').textContent}를 팀원에게 알려주세요.`); }
   };
   const room = new URLSearchParams(location.search).get('room'); if (room) $('roomCode').value = room;
+  loadLeaderboard();
+  setInterval(() => { if (document.visibilityState === 'visible') loadLeaderboard(); }, 20000);
 })();
