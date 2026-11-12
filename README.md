@@ -17,4 +17,4 @@ PowerShell에서 `npm` 실행이 정책으로 차단되는 경우 `npm.cmd`를 �
 
 GitHub 저장소 `minerva4392/sun`을 Vercel 프로젝트로 가져오면 루트의 정적 페이지와 `api/ws.js` WebSocket 함수를 함께 배포합니다. 배포된 HTTPS 주소에서 세 명이 접속해 방 코드를 공유하세요. 브라우저는 자동으로 WSS 연결을 사용합니다.
 
-Vercel WebSocket 함수는 연결이 서로 다른 인스턴스에 배정될 수 있습니다. 현재 방 상태는 서버 메모리에 있으므로 인스턴스가 나뉘거나 재시작되면 방이 동기화되지 않을 수 있습니다. 안정적인 다중 인스턴스 운영에는 Redis 같은 공유 상태 저장소 연결이 필요합니다.
+Vercel WebSocket 함수는 연결이 서로 다른 인스턴스에 배정될 수 있습니다. Vercel Marketplace에서 Upstash Redis를 연결하면 방 상태와 팀 메시지를 공유합니다. 로컬 개발은 Redis 환경 변수가 없어도 메모리 저장소로 실행됩니다.
