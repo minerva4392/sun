@@ -9,7 +9,7 @@
     if (!('WebSocket' in window)) { status('이 브라우저는 온라인 연결을 지원하지 않아요.'); return; }
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = location.host || 'localhost:3000';
-    ws = new WebSocket(`${protocol}//${host}`);
+    ws = new WebSocket(`${protocol}//${host}/api/ws`);
     status('게임 서버에 연결하는 중…');
     ws.onopen = () => send(kind, { code: $('roomCode').value.trim().toUpperCase(), name: $('playerName').value.trim(), role: $('playerRole').value });
     ws.onmessage = event => {

@@ -22,7 +22,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': mime[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' }).end(data);
   });
 });
-const wss = new WebSocketServer({ server, perMessageDeflate: false, maxPayload: 2048 });
+const wss = new WebSocketServer({ server, path: '/api/ws', perMessageDeflate: false, maxPayload: 2048 });
 
 function send(ws, type, data = {}) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, ...data })); }
 function publicState(room) {
@@ -85,4 +85,5 @@ wss.on('connection', ws => {
   });
   ws.on('close', () => remove(ws)); ws.on('error', () => remove(ws));
 });
-server.listen(port, '0.0.0.0', () => console.log(`Countdown Club listening on ${port}`));
+if (require.main === module) server.listen(port, '0.0.0.0', () => console.log(`Countdown Club listening on ${port}`));
+module.exports = server;
